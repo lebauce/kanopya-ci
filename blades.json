@@ -1,0 +1,40 @@
+[
+    {
+        "ram"  : 8589934592,
+        "core" : 8,
+        "serial_number" : "Orval",
+        "hypervisor" : 1,
+        "blade" : 1,
+        "nics" : [
+            {
+                "name" : "eth0",
+                "mac"  : "00:25:90:a4:97:58",
+                "pxe"  : 1
+            },
+            {
+                "name" : "eth1",
+                "mac"  : "00:25:90:a4:97:59",
+                "pxe"  : 0
+            }
+        ]
+    },
+    {
+        "ram"  : 8589934592,
+        "core" : 8,
+        "serial_number" : "Duvel",
+        "hypervisor" : 1,
+        "blade" : 1,
+        "nics" : [
+            {
+                "name" : "eth0",
+                "mac"  : "00:25:90:a5:13:aa",
+                "pxe"  : 1
+            },
+            {
+                "name" : "eth0",
+                "mac"  : "00:25:90:a5:13:ab",
+                "pxe"  : 1
+            }
+        ]
+    }
+]

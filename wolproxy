@@ -1,0 +1,160 @@
+#!/usr/bin/python
+
+import pcapy
+import datetime
+import subprocess
+import binascii
+import time
+import threading
+import pickle
+import logging
+import os
+import sys
+import time
+import pdb
+import json
+from autojenkins import Jenkins
+
+VM_NAME = "KanopyaHost"
+
+listening = { }
+
+jenkins = Jenkins('http://localhost:8080')
+
+def is_running(job):
+    return jenkins.last_result(job)['building']
+
+def list_interfaces():
+    p1 = subprocess.Popen([ "/sbin/ifconfig" ], stdout=subprocess.PIPE)
+    p2 = subprocess.Popen([ "/usr/bin/cut", "-d", " ", "-f",  "1" ], stdin=p1.stdout, stdout=subprocess.PIPE)
+    p1.stdout.close()
+    output = p2.communicate()[0].split('\n')
+    return [ l for l in output if l.startswith("vboxnet") ]
+
+def job_from_interface(interface):
+    state = pickle.load(open("state"))
+    p1 = subprocess.Popen([ "/sbin/ifconfig", interface ], stdout=subprocess.PIPE)
+    ip = p1.communicate()[0].split("\n")[1].split()[1].split(':')[1]
+    for name, job in state['jobs'].items():
+        if job.get('network', '').split('.')[:3] == ip.split('.')[:3]:
+            return name, job
+
+def get_host_from_mac(mac):
+    print "Looking for host with MAC " + mac
+    hosts = json.load(open("virtual_hosts.json"))
+    for host in hosts:
+        for iface in host.get("nics", []):
+            if iface["mac"] == mac:
+                return host
+
+def su(command):
+    time.sleep(3)
+    p1 = subprocess.Popen([ "su", "-c", command, "jenkins" ], stdout=subprocess.PIPE)
+    return p1.communicate()
+
+def get_vms(filter=""):
+    p1 = su("/usr/bin/VBoxManage list runningvms")
+    vms = [ l.split('{')[0][1:-2] for l in p1[0].split("\n") if l ]
+    return [ vm for vm in vms if vm.startswith(filter) ]
+
+def destroy_vm(name):
+    su("/usr/bin/VBoxManage controlvm '%s' poweroff" % name)
+    time.sleep(3)
+    su("/usr/bin/VBoxManage unregistervm '%s' --delete" % name)
+
+def wait_for_job(name, infos, interface):
+    logging.info("Waiting for job %s to finish" % name)
+    try:
+        while is_running(name):
+            time.sleep(5)
+    except:
+        logging.info("An exception has occurred")
+    logging.info("Job %s has finished" % name)
+    logging.info("API returned %s" % str(jenkins.last_result(name)))
+    vms = get_vms(filter=VM_NAME + "-" + name)
+    for vm in vms:
+        logging.info("Destroy virtual machine %s" % vm)
+        destroy_vm(vm)
+    del listening[interface]
+
+def spawn_vm_for_job(job, mac_address, interface):
+    vms = get_vms(filter=VM_NAME)
+    logging.info("Checking if we already have spawned a VM")
+    number = 0
+    for vm in vms:
+        logging.info("Found VM %s" % vm)
+        number = max(number, int(vm.split("-")[-1]) + 1)
+        vminfo = su("/usr/bin/VBoxManage showvminfo '%s' --details" % vm)[0]
+        if mac_address.replace(":", "").upper() in vminfo:
+            logging.info("Do not spawn new machine with MAC address %s" % mac_address)
+            return
+
+    new_vm = VM_NAME + "-" + job[0] + "-" + str(number + 1)
+    host = get_host_from_mac(mac_address.lower())
+
+    logging.info("Spawning virtual machine %s with MAC address %s" % (new_vm, mac_address))
+    su("VBoxManage clonevm '%s' --register --mode all --name '%s'" % (VM_NAME, new_vm))
+    for i, nic in enumerate(host["nics"]):
+        su("VBoxManage modifyvm '%s' --macaddress%s %s" % (new_vm, i + 1, nic["mac"].replace(":", "")))
+        su("VBoxManage modifyvm '%s' --hostonlyadapter%s %s" % (new_vm, i + 1, interface))
+    su("VBoxManage modifyvm '%s' --vrde on" % (new_vm,))
+    host = get_host_from_mac(mac_address.lower())
+    su("VBoxManage modifyvm '%s' --vrdeport %s" % (new_vm, host["vrde"]))
+    # su("VBoxManage modifyvm '" + new_vm + "' --cpus " + cpus)
+    su("VBoxManage startvm '" + new_vm + "' --type headless")
+
+def listen_for_etherwake(interface):
+    job = job_from_interface(interface)
+    cap = pcapy.open_live(interface, 100, 1, 0);
+    cap.setfilter('ether proto 0x0842')
+    (header, payload) = cap.next()
+
+    while header:
+        logging.info('%s: captured Wake On LAN frame, %d bytes, truncated to %d bytes'
+                     % (datetime.datetime.now(), header.getlen(), header.getcaplen()))
+
+        l = []
+        for i in xrange(6):
+            l.append(binascii.b2a_hex(payload[50 + i]))
+        mac_address = ":".join(l)
+
+        logging.info("MAC address %s" % mac_address)
+        spawn_vm_for_job(job, mac_address, interface)
+
+        try:
+            (header, payload) = cap.next()
+        except:
+            logging.info('The interface %s has been destroyed' % interface)
+            del listening[interface]
+            return
+
+def listen_interface(interface):
+    job = job_from_interface(interface)
+    if not job:
+        logging.info("Could not find job that uses %s" % interface)
+        return
+
+    if listening.has_key(interface):
+        return
+
+    logging.info("Start listening on %s" % interface)
+    listening[interface] = True
+
+    t = threading.Thread(target = listen_for_etherwake,
+                         args = (interface,))
+    t.start()
+
+    t2 = threading.Thread(target = wait_for_job,
+                          args = job + (interface,))
+    t2.start()
+
+
+if __name__ == "__main__":
+    os.chdir(os.path.dirname(__file__))
+    logging.basicConfig(level=logging.DEBUG, filename="/var/log/wolproxy.log")
+
+    while True:
+        for interface in list_interfaces():
+            listen_interface(interface)
+
+        time.sleep(10)

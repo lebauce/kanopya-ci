@@ -1,0 +1,139 @@
+#!/bin/bash
+
+source /vagrant/environment.sh
+
+# Setup MySQL
+mysqladmin -u root pass K4n0pY4
+
+# Set up IP forwarding so that the deployed hosts have access to the Net
+echo 1 > /proc/sys/net/ipv4/ip_forward
+iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+
+echo "export PERL5LIB=/opt/kanopya/lib/executor/:/opt/kanopya/lib/external/:/opt/kanopya/lib/administrator/:/opt/kanopya/lib/common:/opt/kanopya/lib/orchestrator:/opt/kanopya/lib/monitor:/opt/kanopya/lib/external/NetApp:/opt/kanopya/lib/test" > /etc/profile.d/kanopya.sh
+cat /vagrant/environment.sh >> /etc/profile.d/kanopya.sh
+source /etc/profile.d/kanopya.sh
+
+sed -i 's/ISCSITARGET_ENABLE=false/ISCSITARGET_ENABLE=true /g' /etc/default/iscsitarget
+sed -i 's/\(127.0.0.1 localhost\\n\)/\1192.168.0.173 download.kanopya.org\\n/g' /opt/kanopya/scripts/install/setup.pl
+sed -i 's/Trace(0)/Trace(1)/g' /opt/kanopya/lib/common/Kanopya/Exceptions.pm
+
+# Upgrade Puppet to 2.7
+DEBIAN_FRONTEND=noninteractive apt-get -y --force-yes install -t squeeze-backports puppetmaster curl
+
+# And install the missing modules
+puppet module install puppetlabs/apache
+puppet module install puppetlabs/haproxy
+puppet module install puppetlabs/mysql
+puppet module install puppetlabs/rabbitmq
+puppet module install puppetlabs/openstack
+
+cd /etc/puppet/modules
+git clone https://github.com/EmilienM/openstack-quantum-puppet.git quantum
+cd quantum
+git checkout -b stable/folsom origin/stable/folsom
+
+cd /etc/puppet/modules
+git clone https://github.com/ekarlso/puppet-vswitch.git vswitch
+cd vswitch
+sed -i s/version/fullversion/g manifests/ovs.pp
+patch -p1 <<EOF
+diff --git a/lib/facter/kernel_modules.rb b/lib/facter/kernel_modules.rb
+index 422f4b3..b279ab5 100644
+--- a/lib/facter/kernel_modules.rb
++++ b/lib/facter/kernel_modules.rb
+@@ -28,3 +28,9 @@ Facter.add("kernel_modules") do
+       end
+     end
+ end
++
++Facter.add("kernelfullversion") do
++    setcode do
++        Facter['kernelrelease'].value.split('-')[0..1].join("-")
++    end
++end
+EOF
+
+cat > /usr/lib/ruby/1.8/facter/osfamily.rb <<EOF
+# Fact: osfamily
+#
+# Purpose: Returns the operating system
+#
+# Resolution:
+#   Maps operating systems to operating system families, such as linux
+#   distribution derivatives. Adds mappings from specific operating systems
+#   to kernels in the case that it is relevant.
+#
+# Caveats:
+#   This fact is completely reliant on the operatingsystem fact, and no
+#   heuristics are used
+#
+
+Facter.add(:osfamily) do
+
+  setcode do
+    case Facter.value(:operatingsystem)
+    when "RedHat", "Fedora", "CentOS", "Scientific", "SLC", "Ascendos", "CloudLinux", "PSBM", "OracleLinux", "OVS", "OEL"
+      "RedHat"
+    when "Ubuntu", "Debian"
+      "Debian"
+    when "SLES", "SLED", "OpenSuSE", "SuSE"
+      "Suse"
+    when "Solaris", "Nexenta"
+      "Solaris"
+    else
+      Facter.value("kernel")
+    end
+  end
+end
+EOF
+
+# Now run the Kanopya setup
+mkdir -p /var/cache/kanopya/monitor/
+/opt/kanopya/scripts/install/setup.pl < /vagrant/setup.inputs
+
+# Copy init scripts
+cp /opt/kanopya/scripts/init/* /etc/init.d/
+
+# Set up code coverage
+mkdir -p /result/cover_db && rm -rf /result/cover_db/*
+export PERL5OPT="-MDevel::Cover=-db,/result/cover_db,-select,kanopya/lib,-subs_only,on"
+
+# Restart Puppet master because of an odd bug
+/etc/init.d/puppetmaster restart
+
+# Register the available hosts into Kanopya
+perl /vagrant/register_hosts.pl
+
+# And finally, execute the test
+cd /result
+yes "" | prove --formatter TAP::Formatter::JUnit /opt/kanopya/t/$TEST > /result/output.xml
+
+cover -report Html_basic -outputdir /result/cover_result /result/cover_db
+cover -report clover -outputdir /result/clover /result/cover_db
+
+if [ "$WEBUI" = "true" ];
+then
+    cp /opt/kanopya/scripts/init/kanopya-front /etc/init.d/
+    chmod +x /etc/init.d/kanopya-front
+    /etc/init.d/kanopya-front start
+    apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y --force-yes install phpmyadmin apache2 || true
+    cp /etc/phpmyadmin/apache.conf /etc/apache2/conf.d/phpmyadmin.conf
+    cat > /etc/phpmyadmin/config-db.php <<EOF
+<?php
+\$dbuser='root';
+\$dbpass='K4n0pY4';
+\$basepath='';
+\$dbname='phpmyadmin';
+\$dbserver='';
+\$dbport='';
+\$dbtype='mysql';
+EOF
+    /etc/init.d/apache2 restart
+fi
+
+if [ "$KEEPALIVE" = "true" ];
+then
+    touch /vagrant/remove_me
+    echo "The job is kept alive. To finish it, remove the file 'remove_me' in the 'vagrant' folder of the workspace"
+    lockfile /vagrant/remove_me || true
+fi
