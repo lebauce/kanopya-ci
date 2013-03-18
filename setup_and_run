@@ -20,6 +20,12 @@ sed -i 's/Trace(0)/Trace(1)/g' /opt/kanopya/lib/common/Kanopya/Exceptions.pm
 # Upgrade Puppet to 2.7
 DEBIAN_FRONTEND=noninteractive apt-get -y --force-yes install -t squeeze-backports puppetmaster curl
 
+cd /etc/puppet/modules
+rm -rf nova
+git clone https://github.com/puppetlabs/puppetlabs-nova.git nova
+cd nova
+git checkout -b folsom origin/folsom
+
 # And install the missing modules
 puppet module install puppetlabs/apache
 puppet module install puppetlabs/haproxy
