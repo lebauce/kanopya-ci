@@ -9,7 +9,7 @@ mysqladmin -u root pass K4n0pY4
 echo 1 > /proc/sys/net/ipv4/ip_forward
 iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
 
-echo "export PERL5LIB=/opt/kanopya/lib/executor/:/opt/kanopya/lib/external/:/opt/kanopya/lib/administrator/:/opt/kanopya/lib/common:/opt/kanopya/lib/orchestrator:/opt/kanopya/lib/monitor:/opt/kanopya/lib/external/NetApp:/opt/kanopya/lib/test" > /etc/profile.d/kanopya.sh
+echo "export PERL5LIB=/opt/kanopya/lib/executor/:/opt/kanopya/lib/external/:/opt/kanopya/lib/administrator/:/opt/kanopya/lib/common:/opt/kanopya/lib/orchestrator:/opt/kanopya/lib/monitor:/opt/kanopya/lib/external/NetApp:/opt/kanopya/lib/test:/opt/kanopya/lib/component/kanopya_executor:/opt/kanopya/lib/component/kanopya_front" > /etc/profile.d/kanopya.sh
 cat /vagrant/environment.sh >> /etc/profile.d/kanopya.sh
 source /etc/profile.d/kanopya.sh
 
