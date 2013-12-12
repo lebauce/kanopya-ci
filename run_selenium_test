@@ -1,0 +1,27 @@
+#!/bin/bash
+
+KANOPYA_IP=`grep admin_ip vagrant/setup.inputs | awk '{print $2}'`
+
+# define a port to listen based on kanopya ip
+IFS='.' tab=($KANOPYA_IP)
+PORT=4444
+let "PORT=$PORT+${tab[2]}"
+
+
+
+mkdir -p result/selenium
+
+if ! pgrep Xvfb
+then
+    echo "Xvfb is not running! Please start it (/usr/bin/Xvfb :5 &)"
+    exit
+fi
+
+export DISPLAY=:5.0
+java -jar /var/lib/jenkins/plugins/selenium/WEB-INF/lib/selenium-server-standalone-2.29.0.jar \
+     -port $PORT \
+     -htmlSuite *firefox \
+     "http://$KANOPYA_IP:5000" \
+     "kanopya/ui/Frontend/selenium/$SELENIUM_TEST.html" \
+     "result/selenium/results.html" \
+     -firefoxProfileTemplate "/var/lib/jenkins/.mozilla/firefox/ycy3autv.Selenium"

@@ -1,0 +1,15 @@
+#!/bin/bash
+
+touch /vagrant/remove_me
+
+source /vagrant/environment.sh
+
+/vagrant/setup_and_run 2>&1 | tee /result/setup_and_run.log
+
+if [ "$KEEPALIVE" = "false" ];
+then
+    echo "Finishing job"
+    rm /vagrant/remove_me
+else
+    echo "The job is kept alive. To finish it, remove the file 'remove_me' in the 'vagrant' folder of the workspace"
+fi
