@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 class CIDB(object):
     """ simple pickle persistence with locking context capacity """
-    def __init__(self, dbfile='cidb.pickled'):
+    def __init__(self, dbfile=os.path.join(os.path.dirname(__file__), 'cidb.pickled')):
         self._dbfile = dbfile
         self._lockfile = dbfile + '.lock'
         if os.path.exists(dbfile):
